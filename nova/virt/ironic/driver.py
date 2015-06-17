@@ -41,7 +41,9 @@ from nova.compute import power_state
 from nova.compute import task_states
 from nova.compute import vm_mode
 from nova import context as nova_context
+from nova import context
 from nova import exception
+from nova import network
 from nova.i18n import _
 from nova.i18n import _LE
 from nova.i18n import _LI
@@ -316,11 +318,12 @@ class IronicDriver(virt_driver.ComputeDriver):
         self.firewall_driver.unfilter_instance(instance, network_info)
 
     def _add_driver_fields(self, node, instance, image_meta, flavor,
-                           preserve_ephemeral=None):
+                           preserve_ephemeral=None, block_device_info=None):
         patch = patcher.create(node).get_deploy_patch(instance,
                                                       image_meta,
                                                       flavor,
-                                                      preserve_ephemeral)
+                                                      preserve_ephemeral,
+                                                      block_device_info)
 
         # Associate the node with an instance
         patch.append({'path': '/instance_uuid', 'op': 'add',
@@ -634,6 +637,24 @@ class IronicDriver(virt_driver.ComputeDriver):
                 compressed.seek(0)
                 return base64.b64encode(compressed.read())
 
+    def get_volume_connector(self, instance):
+        #return {}
+        network_api = network.API()
+        context = nova_context.get_admin_context()
+        iscsi_initiator = 'iqn.2010-07.org.openstack:%s' % instance.uuid
+        r = network_api.list_ports(context, device_id=instance.uuid)
+        if r['ports'] is not None:
+            if r['ports'][0]['fixed_ips'] is not None:
+               ip_address = r['ports'][0]['fixed_ips'][0]['ip_address']
+            else:
+                LOG.error(_LE('Ip address not found for port %s'),
+                     r['ports']['id'], instance=instance)
+        else:
+            LOG.error(_LE('Port not found for Instance %s'),
+                 instance.uuid, instance=instance)
+        return {'ip' : ip_address,'host' : 'ubuntu',
+               'initiator': iscsi_initiator}
+
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info=None, block_device_info=None):
         """Deploy an instance.
@@ -661,7 +682,8 @@ class IronicDriver(virt_driver.ComputeDriver):
         node = self.ironicclient.call("node.get", node_uuid)
         flavor = instance.flavor
 
-        self._add_driver_fields(node, instance, image_meta, flavor)
+        self._add_driver_fields(node, instance, image_meta, flavor, None,
+                                block_device_info)
 
         # NOTE(Shrews): The default ephemeral device needs to be set for
         # services (like cloud-init) that depend on it being returned by the
@@ -1073,7 +1095,7 @@ class IronicDriver(virt_driver.ComputeDriver):
         node = self.ironicclient.call("node.get", node_uuid)
 
         self._add_driver_fields(node, instance, image_meta, instance.flavor,
-                                preserve_ephemeral)
+                                preserve_ephemeral, block_device_info)
 
         # Trigger the node rebuild/redeploy.
         try:

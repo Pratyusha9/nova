@@ -47,7 +47,7 @@ class GenericDriverFields(object):
         self.node = node
 
     def get_deploy_patch(self, instance, image_meta, flavor,
-                         preserve_ephemeral=None):
+                         preserve_ephemeral=None, block_device_info=None):
         """Build a patch to add the required fields to deploy a node.
 
         :param instance: the instance object.
@@ -59,13 +59,30 @@ class GenericDriverFields(object):
         :returns: a json-patch with the fields that needs to be updated.
 
         """
+        
         patch = []
-        patch.append({'path': '/instance_info/image_source', 'op': 'add',
+        if not block_device_info:
+            patch.append({'path': '/instance_info/image_source', 'op': 'add',
                       'value': image_meta['id']})
-        patch.append({'path': '/instance_info/root_gb', 'op': 'add',
+            patch.append({'path': '/instance_info/root_gb', 'op': 'add',
                       'value': str(instance.root_gb)})
-        patch.append({'path': '/instance_info/swap_mb', 'op': 'add',
+            patch.append({'path': '/instance_info/swap_mb', 'op': 'add',
                       'value': str(flavor['swap'])})
+        else:
+            data = block_device_info['block_device_mapping'][0]['connection_info']['data']
+            patch.append({'path': '/instance_info/target_iqn', 'op': 'add',
+                         'value': data['target_iqn']})
+            patch.append({'path': '/instance_info/target_lun', 'op': 'add',
+                         'value': data['target_lun']})
+            patch.append({'path': '/instance_info/target_portal', 'op': 'add',
+                         'value': data['target_portal']})
+            if data['auth_method'] is not None:
+                patch.append({'path': '/instance_info/auth_method', 'op': 'add',
+                         'value': data['auth_method']})
+                patch.append({'path': '/instance_info/auth_username', 'op': 'add',
+                         'value': data['auth_username']})
+                patch.append({'path': '/instance_info/auth_password', 'op': 'add',
+                         'value': data['auth_password']})
 
         if instance.ephemeral_gb:
             patch.append({'path': '/instance_info/ephemeral_gb',
